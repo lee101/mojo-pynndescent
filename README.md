@@ -70,16 +70,19 @@ x86_64 CPU. Best of three; upstream is constrained to `n_jobs=1`.
 
 | case | mojo-pynndescent | pynndescent | ratio |
 | --- | ---: | ---: | ---: |
-| NNDescent build (1200 x 16, k=16) | 78.4 ms | 87.9 ms | 1.12x faster |
+| NNDescent build (1200 x 16, k=16) | 63.8 ms | 94.5 ms | 1.48x faster |
 
 Euclidean graph refinement compares squared distances and takes square roots
-only once when materializing the public graph. The exact-query and graph
-initialization row kernels use SIMD with scalar tails; exact queries parallelize
-independent rows only above 1,048,576 distance-elements.
+only once when materializing the public graph. Distance kernels use independent
+SIMD accumulators with scalar tails, and random graph seeding batches rows to
+avoid per-row NumPy allocations. Exact queries and graph initialization
+parallelize independent rows only above 1,048,576 distance-elements; smaller
+inputs remain serial to avoid worker-launch overhead.
 
 GPU execution is intentionally not provided: the distance scans have low
 arithmetic intensity (roughly three floating-point operations per 16 bytes of
-point data) and host/device transfer would lose to the CPU path.
+point data) and host/device transfer would lose to the CPU path. The MAX
+dependency supplies CPU `parallelize`; it is not used for GPU execution.
 
 ## How it works
 

@@ -109,11 +109,23 @@ class NNDescent:
     def _initial_graph(self) -> np.ndarray:
         n, k = len(self.data), self.n_neighbors
         result = np.empty((n, k), dtype=np.int64)
-        for row in range(n):
-            result[row, 0] = row
-            if k > 1:
-                sample = self._rng.choice(n - 1, size=k - 1, replace=False)
-                result[row, 1:] = sample + (sample >= row)
+        result[:, 0] = np.arange(n)
+        if k > 1:
+            if k - 1 > (n - 1) // 4:
+                for row in range(n):
+                    sample = self._rng.choice(n - 1, size=k - 1, replace=False)
+                    result[row, 1:] = sample + (sample >= row)
+                return result
+            sample = self._rng.integers(0, n - 1, size=(n, k - 1), dtype=np.int64)
+            for col in range(1, k - 1):
+                duplicate = np.any(sample[:, col : col + 1] == sample[:, :col], axis=1)
+                while np.any(duplicate):
+                    sample[duplicate, col] = self._rng.integers(
+                        0, n - 1, size=np.count_nonzero(duplicate)
+                    )
+                    duplicate = np.any(sample[:, col : col + 1] == sample[:, :col], axis=1)
+            rows = np.arange(n)[:, None]
+            result[:, 1:] = sample + (sample >= rows)
         return result
 
     def _build(self, init_graph, init_dist) -> None:

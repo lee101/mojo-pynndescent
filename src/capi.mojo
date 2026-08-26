@@ -1,29 +1,47 @@
 """NN-descent kernels exported to the small Python ctypes layer."""
 
 from std.math import sqrt
+from max.algorithm import parallelize
 from std.sys.info import simd_width_of as simdwidthof
 
 comptime W = simdwidthof[DType.float64]()
+comptime PARALLEL_WORK_THRESHOLD = 1_048_576
+comptime MAX_WORKERS = 16
 comptime FPtr = Pointer[Float64, AnyOrigin[mut=True]]
 comptime IPtr = Pointer[Int64, AnyOrigin[mut=True]]
 
 
 def distance(a: FPtr, b: FPtr, d: Int, metric: Int) -> Float64:
     if metric == 2:
-        var dots = SIMD[DType.float64, W](0.0)
-        var aas = SIMD[DType.float64, W](0.0)
-        var bbs = SIMD[DType.float64, W](0.0)
+        var dots0 = SIMD[DType.float64, W](0.0)
+        var dots1 = SIMD[DType.float64, W](0.0)
+        var aas0 = SIMD[DType.float64, W](0.0)
+        var aas1 = SIMD[DType.float64, W](0.0)
+        var bbs0 = SIMD[DType.float64, W](0.0)
+        var bbs1 = SIMD[DType.float64, W](0.0)
         var j = 0
+        while j + 2 * W <= d:
+            var av0 = a.unsafe_load[width=W](j)
+            var bv0 = b.unsafe_load[width=W](j)
+            var av1 = a.unsafe_load[width=W](j + W)
+            var bv1 = b.unsafe_load[width=W](j + W)
+            dots0 += av0 * bv0
+            dots1 += av1 * bv1
+            aas0 += av0 * av0
+            aas1 += av1 * av1
+            bbs0 += bv0 * bv0
+            bbs1 += bv1 * bv1
+            j += 2 * W
         while j + W <= d:
             var av = a.unsafe_load[width=W](j)
             var bv = b.unsafe_load[width=W](j)
-            dots += av * bv
-            aas += av * av
-            bbs += bv * bv
+            dots0 += av * bv
+            aas0 += av * av
+            bbs0 += bv * bv
             j += W
-        var dot = dots.reduce_add()
-        var aa = aas.reduce_add()
-        var bb = bbs.reduce_add()
+        var dot = (dots0 + dots1).reduce_add()
+        var aa = (aas0 + aas1).reduce_add()
+        var bb = (bbs0 + bbs1).reduce_add()
         while j < d:
             dot += a[unsafe_offset=j] * b[unsafe_offset=j]
             aa += a[unsafe_offset=j] * a[unsafe_offset=j]
@@ -33,25 +51,39 @@ def distance(a: FPtr, b: FPtr, d: Int, metric: Int) -> Float64:
             return 1.0
         return 1.0 - dot / sqrt(aa * bb)
     if metric == 3:
-        var totals = SIMD[DType.float64, W](0.0)
+        var totals0 = SIMD[DType.float64, W](0.0)
+        var totals1 = SIMD[DType.float64, W](0.0)
         var j = 0
+        while j + 2 * W <= d:
+            var delta0 = a.unsafe_load[width=W](j) - b.unsafe_load[width=W](j)
+            var delta1 = a.unsafe_load[width=W](j + W) - b.unsafe_load[width=W](j + W)
+            totals0 += max(delta0, -delta0)
+            totals1 += max(delta1, -delta1)
+            j += 2 * W
         while j + W <= d:
             var delta = a.unsafe_load[width=W](j) - b.unsafe_load[width=W](j)
-            totals += max(delta, -delta)
+            totals0 += max(delta, -delta)
             j += W
-        var total = totals.reduce_add()
+        var total = (totals0 + totals1).reduce_add()
         while j < d:
             var delta = a[unsafe_offset=j] - b[unsafe_offset=j]
             total += -delta if delta < 0.0 else delta
             j += 1
         return total
-    var acc = SIMD[DType.float64, W](0.0)
+    var acc0 = SIMD[DType.float64, W](0.0)
+    var acc1 = SIMD[DType.float64, W](0.0)
     var j = 0
+    while j + 2 * W <= d:
+        var delta0 = a.unsafe_load[width=W](j) - b.unsafe_load[width=W](j)
+        var delta1 = a.unsafe_load[width=W](j + W) - b.unsafe_load[width=W](j + W)
+        acc0 += delta0 * delta0
+        acc1 += delta1 * delta1
+        j += 2 * W
     while j + W <= d:
         var delta = a.unsafe_load[width=W](j) - b.unsafe_load[width=W](j)
-        acc += delta * delta
+        acc0 += delta * delta
         j += W
-    var total = acc.reduce_add()
+    var total = (acc0 + acc1).reduce_add()
     while j < d:
         var delta = a[unsafe_offset=j] - b[unsafe_offset=j]
         total += delta * delta
@@ -62,13 +94,20 @@ def distance(a: FPtr, b: FPtr, d: Int, metric: Int) -> Float64:
 def graph_distance(a: FPtr, b: FPtr, d: Int, metric: Int) -> Float64:
     if metric != 0:
         return distance(a, b, d, metric)
-    var acc = SIMD[DType.float64, W](0.0)
+    var acc0 = SIMD[DType.float64, W](0.0)
+    var acc1 = SIMD[DType.float64, W](0.0)
     var j = 0
+    while j + 2 * W <= d:
+        var delta0 = a.unsafe_load[width=W](j) - b.unsafe_load[width=W](j)
+        var delta1 = a.unsafe_load[width=W](j + W) - b.unsafe_load[width=W](j + W)
+        acc0 += delta0 * delta0
+        acc1 += delta1 * delta1
+        j += 2 * W
     while j + W <= d:
         var delta = a.unsafe_load[width=W](j) - b.unsafe_load[width=W](j)
-        acc += delta * delta
+        acc0 += delta * delta
         j += W
-    var total = acc.reduce_add()
+    var total = (acc0 + acc1).reduce_add()
     while j < d:
         var delta = a[unsafe_offset=j] - b[unsafe_offset=j]
         total += delta * delta
@@ -158,8 +197,24 @@ def mpd_initialize(
     var data = FPtr(unsafe_from_address=data_addr)
     var indices = IPtr(unsafe_from_address=indices_addr)
     var distances = FPtr(unsafe_from_address=distances_addr)
-    for row in range(n):
-        initialize_row(data, indices, distances, row, d, k, metric)
+    if n * k * d >= PARALLEL_WORK_THRESHOLD:
+        var data_address = Int(data)
+        var indices_address = Int(indices)
+        var distances_address = Int(distances)
+
+        @__parameter
+        def work(row: Int):
+            initialize_row(
+                FPtr(unsafe_from_address=data_address),
+                IPtr(unsafe_from_address=indices_address),
+                FPtr(unsafe_from_address=distances_address),
+                row, d, k, metric,
+            )
+
+        parallelize[work](n, min(n, MAX_WORKERS))
+    else:
+        for row in range(n):
+            initialize_row(data, indices, distances, row, d, k, metric)
 
 
 @export("mpd_refine")
@@ -254,5 +309,23 @@ def mpd_query(
     var query = FPtr(unsafe_from_address=query_addr)
     var indices = IPtr(unsafe_from_address=indices_addr)
     var distances = FPtr(unsafe_from_address=distances_addr)
-    for row in range(m):
-        query_row(data, query, indices, distances, row, n, d, k, metric)
+    if m * n * d >= PARALLEL_WORK_THRESHOLD:
+        var data_address = Int(data)
+        var query_address = Int(query)
+        var indices_address = Int(indices)
+        var distances_address = Int(distances)
+
+        @__parameter
+        def work(row: Int):
+            query_row(
+                FPtr(unsafe_from_address=data_address),
+                FPtr(unsafe_from_address=query_address),
+                IPtr(unsafe_from_address=indices_address),
+                FPtr(unsafe_from_address=distances_address),
+                row, n, d, k, metric,
+            )
+
+        parallelize[work](m, min(m, MAX_WORKERS))
+    else:
+        for row in range(m):
+            query_row(data, query, indices, distances, row, n, d, k, metric)

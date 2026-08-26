@@ -90,6 +90,23 @@ def test_large_graph_initialization_parallel_threshold():
     assert np.allclose(distances[:, 0], 0.0)
 
 
+def test_vectorized_initial_graph_has_unique_valid_neighbors():
+    rng = np.random.default_rng(29)
+    data = np.ascontiguousarray(rng.normal(size=(257, 9)))
+    index = NNDescent(data, n_neighbors=31, n_iters=0, random_state=11)
+    indices, _ = index.neighbor_graph
+    assert np.all((indices >= 0) & (indices < len(data)))
+    assert all(len(set(row)) == len(row) for row in indices)
+
+
+def test_dense_initial_graph_has_unique_valid_neighbors():
+    data = np.arange(40.0).reshape(20, 2)
+    index = NNDescent(data, n_neighbors=18, n_iters=0, random_state=13)
+    indices, _ = index.neighbor_graph
+    assert np.all((indices >= 0) & (indices < len(data)))
+    assert all(len(set(row)) == len(row) for row in indices)
+
+
 def test_zero_round_euclidean_graph_has_public_distances():
     data = np.ascontiguousarray([[0.0], [3.0], [7.0]])
     index = NNDescent(data, n_neighbors=1, n_iters=0, random_state=1)
