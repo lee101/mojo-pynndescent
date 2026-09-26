@@ -1,12 +1,9 @@
 """NN-descent kernels exported to the small Python ctypes layer."""
 
 from std.math import sqrt
-from max.algorithm import parallelize
 from std.sys.info import simd_width_of as simdwidthof
 
 comptime W = simdwidthof[DType.float64]()
-comptime PARALLEL_WORK_THRESHOLD = 1_048_576
-comptime MAX_WORKERS = 16
 comptime FPtr = Pointer[Float64, AnyOrigin[mut=True]]
 comptime IPtr = Pointer[Int64, AnyOrigin[mut=True]]
 
@@ -197,24 +194,8 @@ def mpd_initialize(
     var data = FPtr(unsafe_from_address=data_addr)
     var indices = IPtr(unsafe_from_address=indices_addr)
     var distances = FPtr(unsafe_from_address=distances_addr)
-    if n * k * d >= PARALLEL_WORK_THRESHOLD:
-        var data_address = Int(data)
-        var indices_address = Int(indices)
-        var distances_address = Int(distances)
-
-        @__parameter
-        def work(row: Int):
-            initialize_row(
-                FPtr(unsafe_from_address=data_address),
-                IPtr(unsafe_from_address=indices_address),
-                FPtr(unsafe_from_address=distances_address),
-                row, d, k, metric,
-            )
-
-        parallelize[work](n, min(n, MAX_WORKERS))
-    else:
-        for row in range(n):
-            initialize_row(data, indices, distances, row, d, k, metric)
+    for row in range(n):
+        initialize_row(data, indices, distances, row, d, k, metric)
 
 
 @export("mpd_refine")
@@ -309,23 +290,5 @@ def mpd_query(
     var query = FPtr(unsafe_from_address=query_addr)
     var indices = IPtr(unsafe_from_address=indices_addr)
     var distances = FPtr(unsafe_from_address=distances_addr)
-    if m * n * d >= PARALLEL_WORK_THRESHOLD:
-        var data_address = Int(data)
-        var query_address = Int(query)
-        var indices_address = Int(indices)
-        var distances_address = Int(distances)
-
-        @__parameter
-        def work(row: Int):
-            query_row(
-                FPtr(unsafe_from_address=data_address),
-                FPtr(unsafe_from_address=query_address),
-                IPtr(unsafe_from_address=indices_address),
-                FPtr(unsafe_from_address=distances_address),
-                row, n, d, k, metric,
-            )
-
-        parallelize[work](m, min(m, MAX_WORKERS))
-    else:
-        for row in range(m):
-            query_row(data, query, indices, distances, row, n, d, k, metric)
+    for row in range(m):
+        query_row(data, query, indices, distances, row, n, d, k, metric)
